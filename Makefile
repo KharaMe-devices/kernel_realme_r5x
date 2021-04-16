@@ -438,6 +438,70 @@ KBUILD_CFLAGS_MODULE  := -DMODULE
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
 GCC_PLUGINS_CFLAGS :=
 
+# ifdef VENDOR_EDIT
+# Weizhi.Chen@BSP.Kernel.Driver, 2019/10/09, Add for enviroment variant.
+KBUILD_CFLAGS +=   -DVENDOR_EDIT
+KBUILD_CPPFLAGS += -DVENDOR_EDIT
+CFLAGS_KERNEL +=   -DVENDOR_EDIT
+CFLAGS_MODULE +=   -DVENDOR_EDIT
+
+# ifdef ODM_WT_EDIT
+# xubuchao1_wt@WT.BSP.Kernel.Driver, 2020/04/22, Add for ODM_WT_EDIT
+KBUILD_CFLAGS +=   -DODM_WT_EDIT
+KBUILD_CPPFLAGS += -DODM_WT_EDIT
+CFLAGS_KERNEL +=   -DODM_WT_EDIT
+CFLAGS_MODULE +=   -DODM_WT_EDIT
+
+#ifdef VENDOR_EDIT
+#ye.zhang@BSP.Boot.Bootflow, 2020-3-20, Modify for diable QSSI
+ifeq ($(SHIPPING_API_LEVEL), 28)
+$(warning "SHIPPING_API_LEVEL is 28")
+CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y
+endif
+#endif//VENDOR_EDIT
+
+ifneq ($(CONFIDENTIAL_EUCLID_VERSION),0)
+KBUILD_CFLAGS +=   -DCONFIG_CONFIDENTIAL_EUCLID_VERSION
+endif
+# endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+#Ke.Li@ROM, Security, 2020-01-10, bypass exec and remount security feature in DEV version
+ifeq ($(OBSOLETE_KEEP_ADB_SECURE),1)
+KBUILD_CFLAGS += -DOPPO_DISALLOW_KEY_INTERFACES
+endif
+#endif
+
+#Hui.Fan@BSP.Kernel.Security, 2017-02-12
+#Obscure the cpu model number in confidential version
+ifeq ($(CONFIDENTIAL_VERSION),1)
+KBUILD_CFLAGS += -DCONFIG_CONFIDENTIAL_VERSION
+endif
+
+#ifdef VENDOR_EDIT
+#Jacky Zhuo@PSW.BSP.CHG.Basic, 2019/11/29, sjc Add for 806 high/low temp aging test
+ifeq ($(OPPO_HIGH_TEMP_VERSION),true)
+KBUILD_CFLAGS += -DCONFIG_HIGH_TEMP_VERSION
+KBUILD_CPPFLAGS += -DCONFIG_HIGH_TEMP_VERSION
+endif
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+#huangjianan@TECH.Storage.FS.F2FS, 2020-03-08, add for aging version
+ifneq (,$(findstring Aging,$(SPECIAL_VERSION)))
+OPPO_F2FS_DEBUG := true
+endif
+
+export OPPO_F2FS_DEBUG
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+#yulianghan@bsp.bootflow, 2020-05-19, add for aging version
+ifneq (,$(findstring aging,$(ENGINEERING_VARIANT)))
+KBUILD_CFLAGS += -DMSM_EMMC_ENG_CDT
+endif
+#endif /* VENDOR_EDIT */
+
 export ARCH SRCARCH CONFIG_SHELL HOSTCC HOSTCFLAGS CROSS_COMPILE AS LD CC
 export CPP AR NM STRIP OBJCOPY OBJDUMP HOSTLDFLAGS HOST_LOADLIBES
 export MAKE AWK GENKSYMS INSTALLKERNEL PERL PYTHON UTS_MACHINE

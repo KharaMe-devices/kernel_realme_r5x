@@ -718,9 +718,11 @@ static void fastrpc_mmap_free(struct fastrpc_mmap *map, uint32_t flags)
 	fl = map->fl;
 	if (map->flags == ADSP_MMAP_HEAP_ADDR ||
 				map->flags == ADSP_MMAP_REMOTE_HEAP_ADDR) {
+		spin_lock(&me->hlock);
 		map->refs--;
 		if (!map->refs)
 			hlist_del_init(&map->hn);
+		spin_unlock(&me->hlock);
 		if (map->refs > 0)
 			return;
 	} else {
@@ -900,6 +902,15 @@ static int fastrpc_mmap_create(struct fastrpc_file *fl, int fd,
 				DMA_ATTR_SKIP_CPU_SYNC;
 		else if (map->attr & FASTRPC_ATTR_COHERENT)
 			map->attach->dma_map_attrs |= DMA_ATTR_FORCE_COHERENT;
+        /*zhongxuejian@Cam.drv add QCOM adsp patch for reslove supernight capture performance*/
+        #ifdef VENDOR_EDIT
+		/*
+		 * Skip CPU sync if IO Cohernecy is not supported
+		 * as we flush later
+		 */
+		else if (!sess->smmu.coherent)
+			map->attach->dma_map_attrs |= DMA_ATTR_SKIP_CPU_SYNC;
+        #endif
 
 		VERIFY(err, !IS_ERR_OR_NULL(map->table =
 			dma_buf_map_attachment(map->attach,
@@ -1650,10 +1661,18 @@ static int get_args(uint32_t kernel, struct smq_invoke_ctx *ctx)
 		if (rpra && lrpra && rpra[i].buf.len &&
 			ctx->overps[oix]->mstart) {
 			if (map && map->buf) {
+        /*zhongxuejian@Cam.drv add QCOM adsp patch for reslove supernight capture performance*/
+        #ifdef VENDOR_EDIT
+				dma_buf_begin_cpu_access(map->buf,
+					DMA_TO_DEVICE);
+				dma_buf_end_cpu_access(map->buf,
+					DMA_TO_DEVICE);
+        #else
 				dma_buf_begin_cpu_access(map->buf,
 					DMA_BIDIRECTIONAL);
 				dma_buf_end_cpu_access(map->buf,
 					DMA_BIDIRECTIONAL);
+        #endif
 			} else
 				dmac_flush_range(uint64_to_ptr(rpra[i].buf.pv),
 					uint64_to_ptr(rpra[i].buf.pv
@@ -1809,10 +1828,18 @@ static void inv_args(struct smq_invoke_ctx *ctx)
 			continue;
 		}
 		if (map && map->buf) {
+        /*zhongxuejian@Cam.drv add QCOM adsp patch for reslove supernight capture performance*/
+        #ifdef VENDOR_EDIT
+			dma_buf_begin_cpu_access(map->buf,
+				DMA_FROM_DEVICE);
+			dma_buf_end_cpu_access(map->buf,
+				DMA_FROM_DEVICE);
+        #else
 			dma_buf_begin_cpu_access(map->buf,
 				DMA_BIDIRECTIONAL);
 			dma_buf_end_cpu_access(map->buf,
 				DMA_BIDIRECTIONAL);
+        #endif
 		} else
 			dmac_inv_range((char *)uint64_to_ptr(rpra[i].buf.pv),
 				(char *)uint64_to_ptr(rpra[i].buf.pv
@@ -2630,7 +2657,7 @@ static int fastrpc_internal_munmap(struct fastrpc_file *fl,
 		pr_err("adsprpc: ERROR: %s: user application %s trying to unmap without initialization\n",
 			 __func__, current->comm);
 		err = -EBADR;
-		goto bail;
+		return err;
 	}
 	mutex_lock(&fl->internal_map_mutex);
 
@@ -2678,6 +2705,11 @@ bail:
 	return err;
 }
 
+/*
+ *	fastrpc_internal_munmap_fd can only be used for buffers
+ *	mapped with persist attributes. This can only be called
+ *	once for any persist buffer
+ */
 static int fastrpc_internal_munmap_fd(struct fastrpc_file *fl,
 				struct fastrpc_ioctl_munmap_fd *ud)
 {
@@ -2686,14 +2718,15 @@ static int fastrpc_internal_munmap_fd(struct fastrpc_file *fl,
 
 	VERIFY(err, (fl && ud));
 	if (err)
-		goto bail;
+		return err;
 	VERIFY(err, fl->dsp_proc_init == 1);
 	if (err) {
 		pr_err("adsprpc: ERROR: %s: user application %s trying to unmap without initialization\n",
 			__func__, current->comm);
 		err = -EBADR;
-		goto bail;
+		return err;
 	}
+	mutex_lock(&fl->internal_map_mutex);
 	mutex_lock(&fl->map_mutex);
 	if (fastrpc_mmap_find(fl, ud->fd, ud->va, ud->len, 0, 0, &map)) {
 		pr_err("adsprpc: mapping not found to unmap fd 0x%x, va 0x%llx, len 0x%x\n",
@@ -2703,10 +2736,13 @@ static int fastrpc_internal_munmap_fd(struct fastrpc_file *fl,
 		mutex_unlock(&fl->map_mutex);
 		goto bail;
 	}
-	if (map)
+	if (map && (map->attr & FASTRPC_ATTR_KEEP_MAP)) {
+		map->attr = map->attr & (~FASTRPC_ATTR_KEEP_MAP);
 		fastrpc_mmap_free(map, 0);
+	}
 	mutex_unlock(&fl->map_mutex);
 bail:
+	mutex_unlock(&fl->internal_map_mutex);
 	return err;
 }
 
@@ -2725,7 +2761,7 @@ static int fastrpc_internal_mmap(struct fastrpc_file *fl,
 		pr_err("adsprpc: ERROR: %s: user application %s trying to map without initialization\n",
 			__func__, current->comm);
 		err = -EBADR;
-		goto bail;
+		return err;
 	}
 	mutex_lock(&fl->internal_map_mutex);
 	if (ud->flags == ADSP_MMAP_ADD_PAGES) {
@@ -3337,6 +3373,15 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
 
 	snprintf(strpid, PID_SIZE, "%d", current->pid);
 	buf_size = strlen(current->comm) + strlen("_") + strlen(strpid) + 1;
+
+	/* yanghao@PSW.Kernel.Stability kasan detect the buf_size < snprintf return size caused
+	 * the out of bounds. here just alloc the UL_SIZE 2019-01-05
+	 */
+#ifdef VENDOR_EDIT
+	if (buf_size < UL_SIZE)
+		buf_size = UL_SIZE;
+#endif /*VENDOR_EDIT*/
+
 	VERIFY(err, NULL != (fl->debug_buf = kzalloc(buf_size, GFP_KERNEL)));
 	if (err) {
 		kfree(fl);

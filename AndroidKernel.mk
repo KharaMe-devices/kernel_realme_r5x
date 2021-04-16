@@ -42,10 +42,30 @@ ifeq ($(KERNEL_HEADER_DEFCONFIG),)
 KERNEL_HEADER_DEFCONFIG := $(KERNEL_DEFCONFIG)
 endif
 
+ifeq ($(ODM_WT_EDIT),yes)
+# Lijie.Yang@ODM_WT.BSP.Kernel.Stability.1941873, 2020/04/02, add for important debug config and controlled by WT_FINAL_RELEASE
+ifeq ($(WT_FINAL_RELEASE),yes)
+KERNEL_CONFIG_OVERRIDE := CONFIG_DYNAMIC_DEBUG=n
+KERNEL_CONFIG_OVERRIDE += CONFIG_MSM_DEBUG_LAR_UNLOCK=n
+KERNEL_CONFIG_OVERRIDE += CONFIG_QCOM_RTB=n
+KERNEL_CONFIG_OVERRIDE += CONFIG_QCOM_RTB_SEPARATE_CPUS=n
+else
+KERNEL_CONFIG_OVERRIDE := CONFIG_LOG_BUF_SHIFT=20
+KERNEL_CONFIG_OVERRIDE += CONFIG_DYNAMIC_DEBUG=y
+KERNEL_CONFIG_OVERRIDE += CONFIG_MSM_DEBUG_LAR_UNLOCK=y
+KERNEL_CONFIG_OVERRIDE += CONFIG_QCOM_RTB=y
+KERNEL_CONFIG_OVERRIDE += CONFIG_QCOM_RTB_SEPARATE_CPUS=y
+endif # WT_FINAL_RELEASE
+endif # ODM_WT_EDIT
+
 # Force 32-bit binder IPC for 64bit kernel with 32bit userspace
 ifeq ($(KERNEL_ARCH),arm64)
 ifeq ($(TARGET_ARCH),arm)
+ifneq ($(ODM_WT_EDIT),yes)
 KERNEL_CONFIG_OVERRIDE := CONFIG_ANDROID_BINDER_IPC_32BIT=y
+else
+KERNEL_CONFIG_OVERRIDE += CONFIG_ANDROID_BINDER_IPC_32BIT=y
+endif # ODM_WT_EDIT
 endif
 endif
 
@@ -177,7 +197,7 @@ $(KERNEL_CONFIG): $(KERNEL_OUT)
 	$(MAKE) -C $(TARGET_KERNEL_SOURCE) O=$(BUILD_ROOT_LOC)$(KERNEL_OUT) $(KERNEL_MAKE_ENV) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(real_cc) $(KERNEL_DEFCONFIG)
 	$(hide) if [ ! -z "$(KERNEL_CONFIG_OVERRIDE)" ]; then \
 			echo "Overriding kernel config with '$(KERNEL_CONFIG_OVERRIDE)'"; \
-			echo $(KERNEL_CONFIG_OVERRIDE) >> $(KERNEL_OUT)/.config; \
+			for CONFIG_OVERRIDE in $(KERNEL_CONFIG_OVERRIDE);do echo $$CONFIG_OVERRIDE >> $(KERNEL_OUT)/.config; done; \
 			$(MAKE) -C $(TARGET_KERNEL_SOURCE) O=$(BUILD_ROOT_LOC)$(KERNEL_OUT) $(KERNEL_MAKE_ENV) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(real_cc) oldconfig; fi
 
 ifeq ($(TARGET_KERNEL_APPEND_DTB), true)
@@ -190,7 +210,7 @@ $(TARGET_PREBUILT_INT_KERNEL_IMAGE): $(KERNEL_OUT) $(KERNEL_HEADERS_INSTALL)
 	$(MAKE) -C $(TARGET_KERNEL_SOURCE) O=$(BUILD_ROOT_LOC)$(KERNEL_OUT) INSTALL_MOD_PATH=$(BUILD_ROOT_LOC)../$(KERNEL_MODULES_INSTALL) INSTALL_MOD_STRIP=1 $(KERNEL_MAKE_ENV) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(real_cc) modules_install
 	$(mv-modules)
 	$(clean-module-folder)
-
+	
 $(TARGET_PREBUILT_INT_KERNEL): $(TARGET_PREBUILT_INT_KERNEL_IMAGE)
 	$(hide) echo "Building kernel..."
 	$(hide) rm -rf $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts
@@ -205,7 +225,6 @@ $(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_OUT) $(KERNEL_HEADERS_INSTALL)
 	$(mv-modules)
 	$(clean-module-folder)
 endif
-
 $(KERNEL_HEADERS_INSTALL): $(KERNEL_OUT)
 	$(hide) if [ ! -z "$(KERNEL_HEADER_DEFCONFIG)" ]; then \
 			rm -f $(BUILD_ROOT_LOC)$(KERNEL_CONFIG); \
@@ -221,7 +240,7 @@ $(KERNEL_HEADERS_INSTALL): $(KERNEL_OUT)
 			$(MAKE) -C $(TARGET_KERNEL_SOURCE) O=$(BUILD_ROOT_LOC)$(KERNEL_OUT) $(KERNEL_MAKE_ENV) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(real_cc) $(KERNEL_DEFCONFIG); fi
 	$(hide) if [ ! -z "$(KERNEL_CONFIG_OVERRIDE)" ]; then \
 			echo "Overriding kernel config with '$(KERNEL_CONFIG_OVERRIDE)'"; \
-			echo $(KERNEL_CONFIG_OVERRIDE) >> $(KERNEL_OUT)/.config; \
+			for CONFIG_OVERRIDE in $(KERNEL_CONFIG_OVERRIDE);do echo $$CONFIG_OVERRIDE >> $(KERNEL_OUT)/.config; done; \
 			$(MAKE) -C $(TARGET_KERNEL_SOURCE) O=$(BUILD_ROOT_LOC)$(KERNEL_OUT) $(KERNEL_MAKE_ENV) ARCH=$(KERNEL_ARCH) CROSS_COMPILE=$(KERNEL_CROSS_COMPILE) $(real_cc) oldconfig; fi
 
 # RTIC DTS to DTB (if MPGen enabled;
@@ -232,12 +251,22 @@ $(RTIC_DTB): $(INSTALLED_KERNEL_TARGET)
 	touch $(RTIC_DTB)
 
 # Creating a dtb.img once the kernel is compiled if TARGET_KERNEL_APPEND_DTB is set to be false
+# ifndef VENDOR_EDIT
+# Weizhi.Chen@BSP.Kernel.Driver, 2019/10/09, Modify for use oppo target defconfig for kernel.
+# $(INSTALLED_DTBIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL) $(INSTALLED_KERNEL_TARGET) $(RTIC_DTB)
+#	$(hide) if [ -d "$(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/vendor/" ]; then \
+#			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/vendor/qcom/*.dtb $(RTIC_DTB) > $@; \
+#		else \
+#			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/qcom/*.dtb $(RTIC_DTB) > $@; \
+#		fi
+# else
 $(INSTALLED_DTBIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL) $(INSTALLED_KERNEL_TARGET) $(RTIC_DTB)
 	$(hide) if [ -d "$(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/vendor/" ]; then \
-			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/vendor/qcom/*.dtb $(RTIC_DTB) > $@; \
+			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/vendor/*/*.dtb $(RTIC_DTB) > $@; \
 		else \
-			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/qcom/*.dtb $(RTIC_DTB) > $@; \
+			cat $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/dts/*/*.dtb $(RTIC_DTB) > $@; \
 		fi
+# endif /* VENDOR_EDIT */
 
 .PHONY: kerneltags
 kerneltags: $(KERNEL_OUT) $(KERNEL_CONFIG)

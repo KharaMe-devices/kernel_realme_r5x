@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2019, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -576,6 +576,7 @@ static int diag_remove_client_entry(struct file *file)
 		return -EINVAL;
 	}
 
+	mutex_lock(&driver->diagchar_mutex);
 	diagpriv_data = file->private_data;
 	for (i = 0; i < driver->num_clients; i++)
 		if (diagpriv_data && diagpriv_data->pid ==
@@ -585,11 +586,13 @@ static int diag_remove_client_entry(struct file *file)
 		DIAG_LOG(DIAG_DEBUG_USERSPACE,
 			"pid %d, not present in client map\n",
 			diagpriv_data->pid);
+		mutex_unlock(&driver->diagchar_mutex);
 		mutex_unlock(&driver->diag_file_mutex);
 		return -EINVAL;
 	}
 	DIAG_LOG(DIAG_DEBUG_USERSPACE, "diag: %s process exit with pid = %d\n",
 		driver->client_map[i].name, diagpriv_data->pid);
+	mutex_unlock(&driver->diagchar_mutex);
 	/*
 	 * clean up any DCI registrations, if this is a DCI client
 	 * This will specially help in case of ungraceful exit of any DCI client
@@ -775,7 +778,12 @@ int diag_cmd_add_reg(struct diag_cmd_reg_entry_t *new_entry, uint8_t proc,
 		     int pid)
 {
 	struct diag_cmd_reg_t *new_item = NULL;
-
+#ifdef ODM_WT_EDIT
+	//+Changli.Chen@ODM_WT.Conn.Bluetooth.Basic.1372106,2019/04/16 add for fix BT sometimes coupling fail
+	struct diag_cmd_reg_t *temp_item = NULL;
+	struct diag_cmd_reg_entry_t *temp_entry = NULL;
+	//-Changli.Chen@ODM_WT.Conn.Bluetooth.Basic.1372106,2019/04/16 add for fix BT sometimes coupling fail
+#endif
 	if (!new_entry) {
 		pr_err("diag: In %s, invalid new entry\n", __func__);
 		return -EINVAL;
@@ -801,6 +809,22 @@ int diag_cmd_add_reg(struct diag_cmd_reg_entry_t *new_entry, uint8_t proc,
 	INIT_LIST_HEAD(&new_item->link);
 
 	mutex_lock(&driver->cmd_reg_mutex);
+#ifdef ODM_WT_EDIT
+	//+Changli.Chen@ODM_WT.Conn.Bluetooth.Basic.1372106,2019/04/16 add for fix BT sometimes coupling fail
+	if(proc > 0) {
+		temp_entry = diag_cmd_search(new_entry, proc);
+		if (temp_entry) {
+			temp_item = container_of(temp_entry, struct diag_cmd_reg_t, entry);
+			if (temp_item) {
+				temp_item->pid = pid;
+				mutex_unlock(&driver->cmd_reg_mutex);
+				kfree(new_item);
+				return 0;
+			}
+		}
+	}
+	//-Changli.Chen@ODM_WT.Conn.Bluetooth.Basic.1372106,2019/04/16 add for fix BT sometimes coupling fail
+#endif
 	list_add_tail(&new_item->link, &driver->cmd_reg_list);
 	driver->cmd_reg_count++;
 	diag_cmd_invalidate_polling(DIAG_CMD_ADD);

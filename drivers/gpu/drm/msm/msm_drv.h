@@ -121,6 +121,12 @@ enum msm_mdp_plane_property {
 	PLANE_PROP_PREFILL_TIME,
 	PLANE_PROP_SCALER_V1,
 	PLANE_PROP_SCALER_V2,
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Support custom propertys
+*/
+	PLANE_PROP_CUSTOM,
+#endif /* VENDOR_EDIT */
 	PLANE_PROP_ROT_OUT_FB,
 	PLANE_PROP_INVERSE_PMA,
 
@@ -161,6 +167,12 @@ enum msm_mdp_crtc_property {
 	CRTC_PROP_SECURITY_LEVEL,
 	CRTC_PROP_IDLE_TIMEOUT,
 	CRTC_PROP_DEST_SCALER,
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-11-21
+ * Support custom propertys
+*/
+	CRTC_PROP_CUSTOM,
+#endif
 	CRTC_PROP_CAPTURE_OUTPUT,
 
 	CRTC_PROP_IDLE_PC_STATE,
@@ -191,6 +203,12 @@ enum msm_mdp_conn_property {
 	CONNECTOR_PROP_ROI_V1,
 	CONNECTOR_PROP_BL_SCALE,
 	CONNECTOR_PROP_AD_BL_SCALE,
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Feature,2018-011-21
+ * Support custom propertys
+*/
+	CONNECTOR_PROP_CUSTOM,
+#endif
 
 	/* enum/bitmask properties */
 	CONNECTOR_PROP_TOPOLOGY_NAME,
@@ -247,6 +265,18 @@ enum msm_display_caps {
 	MSM_DISPLAY_ESD_ENABLED		= BIT(4),
 	MSM_DISPLAY_CAP_MST_MODE	= BIT(5),
 	MSM_DISPLAY_SPLIT_LINK		= BIT(6),
+};
+
+/**
+ * enum panel_mode - panel operation mode
+ * @MSM_DISPLAY_VIDEO_MODE: video mode panel
+ * @MSM_DISPLAY_CMD_MODE:   Command mode panel
+ * @MODE_MAX:
+ */
+enum panel_op_mode {
+	MSM_DISPLAY_VIDEO_MODE = 0,
+	MSM_DISPLAY_CMD_MODE,
+	MSM_DISPLAY_MODE_MAX,
 };
 
 /**
@@ -489,6 +519,7 @@ struct msm_mode_info {
 struct msm_display_info {
 	int intf_type;
 	uint32_t capabilities;
+	enum panel_op_mode curr_panel_mode;
 
 	uint32_t num_of_h_tiles;
 	uint32_t h_tile_instance[MAX_H_TILES_PER_DISPLAY];

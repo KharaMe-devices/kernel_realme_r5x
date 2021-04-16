@@ -31,6 +31,15 @@
 #define DEFAULT_PANEL_JITTER_ARRAY_SIZE		2
 #define DEFAULT_PANEL_PREFILL_LINES	25
 
+#ifdef VENDOR_EDIT
+//liwei.a@PSW.MM.Display.Stability, 2019/07/12, add interface for tp to get lcd status resumed or not
+int lcd_running_tag = -1;
+
+int get_lcd_status(){
+	return lcd_running_tag;
+}
+#endif
+
 static struct dsi_display_mode_priv_info default_priv_info = {
 	.panel_jitter_numer = DEFAULT_PANEL_JITTER_NUMERATOR,
 	.panel_jitter_denom = DEFAULT_PANEL_JITTER_DENOMINATOR,
@@ -81,6 +90,8 @@ static void convert_to_dsi_mode(const struct drm_display_mode *drm_mode,
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_DMS;
 	if (msm_is_mode_seamless_vrr(drm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_VRR;
+	if (msm_is_mode_seamless_poms(drm_mode))
+		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_POMS;
 	if (msm_is_mode_seamless_dyn_clk(drm_mode))
 		dsi_mode->dsi_mode_flags |= DSI_MODE_FLAG_DYN_CLK;
 
@@ -88,6 +99,11 @@ static void convert_to_dsi_mode(const struct drm_display_mode *drm_mode,
 			!!(drm_mode->flags & DRM_MODE_FLAG_PHSYNC);
 	dsi_mode->timing.v_sync_polarity =
 			!!(drm_mode->flags & DRM_MODE_FLAG_PVSYNC);
+
+	if (drm_mode->flags & DRM_MODE_FLAG_VID_MODE_PANEL)
+		dsi_mode->panel_mode = DSI_OP_VIDEO_MODE;
+	if (drm_mode->flags & DRM_MODE_FLAG_CMD_MODE_PANEL)
+		dsi_mode->panel_mode = DSI_OP_CMD_MODE;
 }
 
 void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
@@ -125,6 +141,8 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_DMS;
 	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_VRR)
 		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_VRR;
+	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_POMS)
+		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_POMS;
 	if (dsi_mode->dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)
 		drm_mode->private_flags |= MSM_MODE_FLAG_SEAMLESS_DYN_CLK;
 
@@ -132,6 +150,11 @@ void dsi_convert_to_drm_mode(const struct dsi_display_mode *dsi_mode,
 		drm_mode->flags |= DRM_MODE_FLAG_PHSYNC;
 	if (dsi_mode->timing.v_sync_polarity)
 		drm_mode->flags |= DRM_MODE_FLAG_PVSYNC;
+
+	if (dsi_mode->panel_mode == DSI_OP_VIDEO_MODE)
+		drm_mode->flags |= DRM_MODE_FLAG_VID_MODE_PANEL;
+	if (dsi_mode->panel_mode == DSI_OP_CMD_MODE)
+		drm_mode->flags |= DRM_MODE_FLAG_CMD_MODE_PANEL;
 
 	/* set mode name */
 	snprintf(drm_mode->name, DRM_DISPLAY_MODE_LEN, "%dx%dx%dx%d",
@@ -187,7 +210,12 @@ static void dsi_bridge_pre_enable(struct drm_bridge *bridge)
 		return;
 	}
 
-	SDE_ATRACE_BEGIN("dsi_display_prepare");
+	#ifdef VENDOR_EDIT
+	//liwei.a@PSW.MM.Display.Stability, 2019/07/12, add interface for tp to get lcd status resumed or not
+	lcd_running_tag = 1;
+	#endif
+
+	SDE_ATRACE_BEGIN("dsi_bridge_pre_enable");
 	rc = dsi_display_prepare(c_bridge->display);
 	if (rc) {
 		pr_err("[%d] DSI display prepare failed, rc=%d\n",
@@ -236,8 +264,16 @@ static void dsi_bridge_enable(struct drm_bridge *bridge)
 		pr_err("[%d] DSI display post enabled failed, rc=%d\n",
 		       c_bridge->id, rc);
 
-	if (display && display->drm_conn)
+	if (display && display->drm_conn) {
 		sde_connector_helper_bridge_enable(display->drm_conn);
+		if (c_bridge->dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_POMS)
+			sde_connector_schedule_status_work(display->drm_conn,
+				true);
+	}
+	#ifdef VENDOR_EDIT
+	//liwei.a@PSW.MM.Display.Stability, 2019/07/12, add interface for tp to get lcd status resumed or not
+	lcd_running_tag = 0;
+	#endif
 }
 
 static void dsi_bridge_disable(struct drm_bridge *bridge)
@@ -252,8 +288,18 @@ static void dsi_bridge_disable(struct drm_bridge *bridge)
 	}
 	display = c_bridge->display;
 
-	if (display && display->drm_conn)
-		sde_connector_helper_bridge_disable(display->drm_conn);
+	if (display && display->drm_conn) {
+		if (bridge->encoder->crtc->state->adjusted_mode.private_flags &
+			MSM_MODE_FLAG_SEAMLESS_POMS) {
+			display->poms_pending = true;
+			/* Disable ESD thread, during panel mode switch */
+			sde_connector_schedule_status_work(display->drm_conn,
+				false);
+		} else {
+			display->poms_pending = false;
+			sde_connector_helper_bridge_disable(display->drm_conn);
+		}
+	}
 
 	rc = dsi_display_pre_disable(c_bridge->display);
 	if (rc) {
@@ -400,13 +446,37 @@ static bool dsi_bridge_mode_fixup(struct drm_bridge *bridge,
 
 		cur_mode = crtc_state->crtc->mode;
 
+		/* No panel mode switch when drm pipeline is changing */
+		if ((dsi_mode.panel_mode != cur_dsi_mode.panel_mode) &&
+			(!(dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_VRR)) &&
+			(crtc_state->enable ==
+				crtc_state->crtc->state->enable))
+			dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_POMS;
+
 		/* No DMS/VRR when drm pipeline is changing */
 		if (!drm_mode_equal(&cur_mode, adjusted_mode) &&
 			(!(dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_VRR)) &&
+			(!(dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_POMS)) &&
 			(!(dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)) &&
 			(!crtc_state->active_changed ||
 			 display->is_cont_splash_enabled))
 			dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_DMS;
+
+		#ifdef VENDOR_EDIT
+		/*Mark.Yao@PSW.MM.Display.LCD.Stable,2019-12-09 skip dms switch if cont_splash not ready */
+		if (display->is_cont_splash_enabled)
+			dsi_mode.dsi_mode_flags &= ~DSI_MODE_FLAG_DMS;
+
+		if (display->panel && display->panel->oppo_priv.is_aod_ramless) {
+			if (crtc_state->active_changed && (dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_DYN_CLK)) {
+				pr_err("dyn clk changed when active_changed, WA to skip dyn clk change\n");
+				dsi_mode.dsi_mode_flags &= ~DSI_MODE_FLAG_DYN_CLK;
+			}
+
+		if (dsi_mode.dsi_mode_flags & DSI_MODE_FLAG_DMS)
+			dsi_mode.dsi_mode_flags |= DSI_MODE_FLAG_SEAMLESS;
+		}
+		#endif /* VENDOR_EDIT */
 
 		/* Reject seemless transition when active/connectors changed.*/
 		if ((crtc_state->active_changed ||

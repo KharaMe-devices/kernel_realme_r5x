@@ -683,19 +683,20 @@ void __init mem_init(void)
 		swiotlb_init(1);
 	else
 		swiotlb_force = SWIOTLB_NO_FORCE;
-
+pr_err("zhye test 0::%s::%d\n", __func__,__LINE__);
 	set_max_mapnr(pfn_to_page(max_pfn) - mem_map);
-
+pr_err("zhye test 1::%s::%d\n", __func__,__LINE__);
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
 	free_unused_memmap();
 #endif
+pr_err("zhye test 2::%s::%d\n", __func__,__LINE__);
 	/* this will put all unused low memory onto the freelists */
 	free_all_bootmem();
-
+pr_err("zhye test 3::%s::%d\n", __func__,__LINE__);
 	kexec_reserve_crashkres_pages();
-
+pr_err("zhye test 4::%s::%d\n", __func__,__LINE__);
 	mem_init_print_info(NULL);
-
+pr_err("zhye test 5::%s::%d\n", __func__,__LINE__);
 #ifdef CONFIG_PRINT_VMEMLAYOUT
 #define MLK(b, t) b, t, ((t) - (b)) >> 10
 #define MLM(b, t) b, t, ((t) - (b)) >> 20
