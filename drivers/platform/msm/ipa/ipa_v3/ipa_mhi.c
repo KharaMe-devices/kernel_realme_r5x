@@ -194,7 +194,7 @@ static int ipa_mhi_start_gsi_channel(enum ipa_client_type client,
 	int res = 0;
 	struct gsi_evt_ring_props ev_props;
 	struct ipa_mhi_msi_info *msi;
-	struct gsi_chan_props ch_props
+	struct gsi_chan_props ch_props;
 	union __packed gsi_channel_scratch ch_scratch;
 	union gsi_channel_scratch ch_scratch1;
 	struct ipa3_ep_context *ep;
