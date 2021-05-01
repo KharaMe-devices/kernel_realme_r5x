@@ -36,11 +36,8 @@
 #ifdef VENDOR_EDIT
 #//zhye@BSP.Boot.Bootflow, 2019-2-19, add for 6125P upgrade
 #dts-dirs += 19021
-ifneq ($(filter MSM_19631, $(OPPO_TARGET_DEVICE)),)
 dts-dirs += 19631
-else ifneq ($(filter MSM_20667, $(OPPO_TARGET_DEVICE)),)
 dts-dirs += 20667
-endif
 #endif
 
 subdir-y	:= $(dts-dirs)
